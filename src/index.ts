@@ -4,12 +4,14 @@ import path from 'path';
 import {
   ASSISTANT_NAME,
   CREDENTIAL_PROXY_PORT,
+  GITHUB_PR_WATCHER,
   IDLE_TIMEOUT,
   POLL_INTERVAL,
   TELEGRAM_BOT_POOL,
   TIMEZONE,
   TRIGGER_PATTERN,
 } from './config.js';
+import { startGitHubPRWatcher } from './github-pr-watcher.js';
 import { startCredentialProxy } from './credential-proxy.js';
 import './channels/index.js';
 import {
@@ -644,6 +646,20 @@ async function main(): Promise<void> {
   });
   queue.setProcessMessagesFn(processGroupMessages);
   recoverPendingMessages();
+
+  // GitHub PR comment watcher (feature-flagged)
+  if (GITHUB_PR_WATCHER) {
+    startGitHubPRWatcher({
+      storeMessage,
+      findMainGroupJid: () => {
+        const entry = Object.entries(registeredGroups).find(
+          ([, g]) => g.isMain,
+        );
+        return entry?.[0];
+      },
+    });
+  }
+
   startMessageLoop().catch((err) => {
     logger.fatal({ err }, 'Message loop crashed unexpectedly');
     process.exit(1);

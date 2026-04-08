@@ -119,6 +119,17 @@ function createSchema(database: Database.Database): void {
     /* column already exists */
   }
 
+  // Add github_pr_comments table for deduplication
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS github_pr_comments (
+      comment_id TEXT PRIMARY KEY,
+      comment_type TEXT NOT NULL DEFAULT 'issue',
+      repo TEXT NOT NULL,
+      pr_number INTEGER NOT NULL,
+      processed_at TEXT NOT NULL
+    )
+  `);
+
   // Add channel and is_group columns if they don't exist (migration for existing DBs)
   try {
     database.exec(`ALTER TABLE chats ADD COLUMN channel TEXT`);
@@ -632,6 +643,29 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
     };
   }
   return result;
+}
+
+// --- JSON migration ---
+
+// --- GitHub PR comment deduplication ---
+
+export function isGitHubCommentProcessed(commentId: string): boolean {
+  const row = db
+    .prepare('SELECT 1 FROM github_pr_comments WHERE comment_id = ?')
+    .get(commentId);
+  return !!row;
+}
+
+export function markGitHubCommentProcessed(
+  commentId: string,
+  commentType: 'issue' | 'review',
+  repo: string,
+  prNumber: number,
+): void {
+  db.prepare(
+    `INSERT OR IGNORE INTO github_pr_comments (comment_id, comment_type, repo, pr_number, processed_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(commentId, commentType, repo, prNumber, new Date().toISOString());
 }
 
 // --- JSON migration ---

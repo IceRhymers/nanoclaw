@@ -10,6 +10,12 @@ const envConfig = readEnvFile([
   'ASSISTANT_NAME',
   'ASSISTANT_HAS_OWN_NUMBER',
   'TELEGRAM_BOT_POOL',
+  'GITHUB_PR_WATCHER',
+  'GITHUB_PR_REPOS',
+  'GITHUB_PR_ALLOWED_USERS',
+  'GITHUB_PR_POLL_INTERVAL',
+  'GITHUB_PR_TRIGGER',
+  'GITHUB_PR_REPLY_JID',
 ]);
 
 export const ASSISTANT_NAME =
@@ -80,6 +86,36 @@ export const TELEGRAM_BOT_POOL = (
   .split(',')
   .map((t) => t.trim())
   .filter(Boolean);
+
+// GitHub PR comment watcher
+export const GITHUB_PR_WATCHER =
+  (process.env.GITHUB_PR_WATCHER || envConfig.GITHUB_PR_WATCHER) === 'true';
+export const GITHUB_PR_REPOS = (
+  process.env.GITHUB_PR_REPOS ||
+  envConfig.GITHUB_PR_REPOS ||
+  ''
+)
+  .split(',')
+  .map((r) => r.trim())
+  .filter(Boolean);
+export const GITHUB_PR_ALLOWED_USERS = (
+  process.env.GITHUB_PR_ALLOWED_USERS ||
+  envConfig.GITHUB_PR_ALLOWED_USERS ||
+  ''
+)
+  .split(',')
+  .map((u) => u.trim().toLowerCase())
+  .filter(Boolean);
+export const GITHUB_PR_POLL_INTERVAL = parseInt(
+  process.env.GITHUB_PR_POLL_INTERVAL ||
+    envConfig.GITHUB_PR_POLL_INTERVAL ||
+    '30000',
+  10,
+);
+export const GITHUB_PR_TRIGGER =
+  process.env.GITHUB_PR_TRIGGER || envConfig.GITHUB_PR_TRIGGER || '#claw';
+export const GITHUB_PR_REPLY_JID =
+  process.env.GITHUB_PR_REPLY_JID || envConfig.GITHUB_PR_REPLY_JID || '';
 
 // Timezone for scheduled tasks (cron expressions, etc.)
 // Uses system timezone by default
