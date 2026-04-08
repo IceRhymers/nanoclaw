@@ -100,6 +100,53 @@ export function ensureContainerRuntimeRunning(): void {
   }
 }
 
+const KANBOARD_CONTAINER = 'nanoclaw-kanboard';
+const KANBOARD_IMAGE = 'kanboard/kanboard:latest';
+const KANBOARD_PORT = '8070';
+
+/** Ensure the Kanboard container is running, starting it if stopped. */
+export function ensureKanboardRunning(): void {
+  try {
+    const status = execSync(
+      `${CONTAINER_RUNTIME_BIN} inspect -f '{{.State.Running}}' ${KANBOARD_CONTAINER}`,
+      { stdio: 'pipe', encoding: 'utf-8', timeout: 10000 },
+    ).trim();
+
+    if (status === 'true') {
+      logger.debug('Kanboard container already running');
+      return;
+    }
+
+    // Container exists but is stopped — start it
+    logger.info('Starting Kanboard container...');
+    execSync(`${CONTAINER_RUNTIME_BIN} start ${KANBOARD_CONTAINER}`, {
+      stdio: 'pipe',
+      timeout: 30000,
+    });
+    logger.info('Kanboard container started');
+  } catch {
+    // Container doesn't exist — create it
+    logger.info('Creating Kanboard container...');
+    try {
+      execSync(
+        `${CONTAINER_RUNTIME_BIN} run -d --name ${KANBOARD_CONTAINER} ` +
+          `--restart unless-stopped ` +
+          `-p ${KANBOARD_PORT}:80 ` +
+          `-v kanboard-data:/var/www/app/data ` +
+          `-v kanboard-plugins:/var/www/app/plugins ` +
+          `${KANBOARD_IMAGE}`,
+        { stdio: 'pipe', timeout: 60000 },
+      );
+      logger.info('Kanboard container created and started');
+    } catch (createErr) {
+      logger.warn(
+        { err: createErr },
+        'Failed to start Kanboard — dev-workflow skills will not have task tracking',
+      );
+    }
+  }
+}
+
 /** Kill orphaned NanoClaw containers from previous runs. */
 export function cleanupOrphans(): void {
   try {

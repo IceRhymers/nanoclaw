@@ -408,6 +408,7 @@ async function runQuery(
         'TodoWrite', 'ToolSearch', 'Skill',
         'NotebookEdit',
         'mcp__nanoclaw__*',
+        'mcp__kanboard__*',
         'mcp__gmail__*',
         'mcp__gmail2__*'
       ],
@@ -423,6 +424,15 @@ async function runQuery(
             NANOCLAW_CHAT_JID: containerInput.chatJid,
             NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
+          },
+        },
+        kanboard: {
+          command: 'node',
+          args: [path.join(path.dirname(mcpServerPath), 'kanboard-mcp-stdio.js')],
+          env: {
+            KANBOARD_URL: process.env.KANBOARD_URL || 'http://host.docker.internal:8070/jsonrpc.php',
+            KANBOARD_USER: process.env.KANBOARD_USER || 'nanoclaw',
+            KANBOARD_TOKEN: process.env.KANBOARD_TOKEN || 'nanoclaw-api-2026',
           },
         },
         gmail: {

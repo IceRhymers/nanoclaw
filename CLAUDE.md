@@ -29,6 +29,9 @@ Single Node.js process with skill-based channel system. Channels (WhatsApp, Tele
 | `/customize` | Adding channels, integrations, changing behavior |
 | `/debug` | Container issues, logs, troubleshooting |
 | `/update-nanoclaw` | Bring upstream NanoClaw updates into a customized install |
+| `/start-task` | OpenSpec + TDD workflow for a Kanboard task (spec → red → green → PR) |
+| `/finish-task` | Regression check, push branch, open PR, move Kanboard task to Review |
+| `/check-regressions` | Run full test suite and report new vs pre-existing failures |
 | `/qodo-pr-resolver` | Fetch and fix Qodo PR review issues interactively or in batch |
 | `/get-qodo-rules` | Load org- and repo-level coding rules from Qodo before code tasks |
 
@@ -55,10 +58,50 @@ systemctl --user stop nanoclaw
 systemctl --user restart nanoclaw
 ```
 
+## Git Remotes
+
+| Remote | URL | Purpose |
+|--------|-----|---------|
+| `origin` | `git@github.com:IceRhymers/nanoclaw.git` | Your fork (push here) |
+| `upstream` | `https://github.com/qwibitai/nanoclaw.git` | Original NanoClaw repo |
+| `marketplace` | `https://github.com/IceRhymers/claude-marketplace-builder.git` | Dev-workflow plugin source |
+
+Pull upstream updates: `git fetch upstream && git merge upstream/main`
+Update dev-workflow skills: `./scripts/update-dev-workflow.sh`
+
+## Kanboard
+
+Kanboard runs as Docker container `nanoclaw-kanboard` on port 8070. Started automatically by NanoClaw via `ensureKanboardRunning()` in `container-runtime.ts`.
+
+- **API endpoint:** `http://localhost:8070/jsonrpc.php` (containers use `host.docker.internal:8070`)
+- **User:** `nanoclaw` / `nanoclaw-api-2026` (must be `app-admin` role — `app-manager` gets 403 on most API methods)
+- **Admin:** `admin` / `admin` (default Kanboard admin, use to manage users)
+- **Data:** persisted in Docker volumes `kanboard-data` and `kanboard-plugins`
+- **MCP server:** `container/agent-runner/src/kanboard-mcp-stdio.ts` — compiled at container startup, provides `mcp__kanboard__*` tools to agents
+
 ## Troubleshooting
 
 **WhatsApp not connecting after upgrade:** WhatsApp is now a separate channel fork, not bundled in core. Run `/add-whatsapp` (or `git remote add whatsapp https://github.com/qwibitai/nanoclaw-whatsapp.git && git fetch whatsapp main && (git merge whatsapp/main || { git checkout --theirs package-lock.json && git add package-lock.json && git merge --continue; }) && npm run build`) to install it. Existing auth credentials and groups are preserved.
 
+**Agent reports errors from previous session (repeats old errors without retrying):** The agent has a persistent session and may remember stale errors. To reset: clear the session from `store/messages.db` (`DELETE FROM sessions WHERE group_folder = '<folder>'`) AND delete the session files at `data/sessions/<folder>/.claude/projects/-workspace-group/<session-id>*`. Must do BOTH — deleting files without clearing the DB causes "No conversation found" crash loops.
+
+**Kanboard 403 on API calls:** The Kanboard user must have `app-admin` role. The `app-manager` role returns `{"code":403}` on most JSON-RPC methods (getAllProjects, etc.). Fix: `curl -u admin:admin http://localhost:8070/jsonrpc.php -d '{"jsonrpc":"2.0","method":"updateUser","id":1,"params":{"id":2,"role":"app-admin"}}'`
+
+**MCP server changes not taking effect in agent containers:** Agent-runner source is copied to `data/sessions/<group>/agent-runner-src/` and bind-mounted over `/app/src` in the container. Changes to `container/agent-runner/src/` propagate automatically on next container spawn (the source is re-synced each time). If changes still don't appear, check for Docker buildkit cache issues (see below).
+
 ## Container Build Cache
 
-The container buildkit caches the build context aggressively. `--no-cache` alone does NOT invalidate COPY steps — the builder's volume retains stale files. To force a truly clean rebuild, prune the builder then re-run `./container/build.sh`.
+The container buildkit caches the build context aggressively. `--no-cache` alone does NOT invalidate COPY steps — the builder's volume retains stale files. To force a truly clean rebuild:
+
+```bash
+docker builder prune -af   # nuke ALL build cache
+./container/build.sh        # rebuild from scratch
+```
+
+## Making Changes Checklist
+
+After editing source files, ALWAYS:
+1. `npm run build` — compile TypeScript
+2. If `container/agent-runner/src/` was changed: `./container/build.sh` — rebuild agent image
+3. `launchctl kickstart -k gui/$(id -u)/com.nanoclaw` — restart the service
+4. Changes only take effect in NEW agent containers (existing ones keep old code)

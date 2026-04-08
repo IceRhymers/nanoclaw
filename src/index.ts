@@ -25,6 +25,7 @@ import {
 import {
   cleanupOrphans,
   ensureContainerRuntimeRunning,
+  ensureKanboardRunning,
   PROXY_BIND_HOST,
 } from './container-runtime.js';
 import {
@@ -470,6 +471,7 @@ function recoverPendingMessages(): void {
 function ensureContainerSystemRunning(): void {
   ensureContainerRuntimeRunning();
   cleanupOrphans();
+  ensureKanboardRunning();
 }
 
 async function main(): Promise<void> {
