@@ -12,6 +12,7 @@ import {
   TRIGGER_PATTERN,
 } from './config.js';
 import { startGitHubPRWatcher } from './github-pr-watcher.js';
+import { startGitHubWebhook, stopGitHubWebhook } from './github-webhook.js';
 import { startCredentialProxy } from './credential-proxy.js';
 import './channels/index.js';
 import {
@@ -493,6 +494,7 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
     proxyServer.close();
+    stopGitHubWebhook();
     await queue.shutdown(10000);
     for (const ch of channels) await ch.disconnect();
     process.exit(0);
@@ -647,18 +649,20 @@ async function main(): Promise<void> {
   queue.setProcessMessagesFn(processGroupMessages);
   recoverPendingMessages();
 
-  // GitHub PR comment watcher (feature-flagged)
+  // GitHub comment handling (polling and/or webhook)
+  const githubDeps = {
+    storeMessage,
+    findMainGroupJid: () => {
+      const entry = Object.entries(registeredGroups).find(
+        ([, g]) => g.isMain,
+      );
+      return entry?.[0];
+    },
+  };
   if (GITHUB_PR_WATCHER) {
-    startGitHubPRWatcher({
-      storeMessage,
-      findMainGroupJid: () => {
-        const entry = Object.entries(registeredGroups).find(
-          ([, g]) => g.isMain,
-        );
-        return entry?.[0];
-      },
-    });
+    startGitHubPRWatcher(githubDeps);
   }
+  startGitHubWebhook(githubDeps); // only starts if GITHUB_SMEE_URL is set
 
   startMessageLoop().catch((err) => {
     logger.fatal({ err }, 'Message loop crashed unexpectedly');

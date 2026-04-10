@@ -16,6 +16,9 @@ const envConfig = readEnvFile([
   'GITHUB_PR_POLL_INTERVAL',
   'GITHUB_PR_TRIGGER',
   'GITHUB_PR_REPLY_JID',
+  'GITHUB_SMEE_URL',
+  'GITHUB_WEBHOOK_SECRET',
+  'GITHUB_WEBHOOK_PORT',
 ]);
 
 export const ASSISTANT_NAME =
@@ -109,13 +112,23 @@ export const GITHUB_PR_ALLOWED_USERS = (
 export const GITHUB_PR_POLL_INTERVAL = parseInt(
   process.env.GITHUB_PR_POLL_INTERVAL ||
     envConfig.GITHUB_PR_POLL_INTERVAL ||
-    '30000',
+    '120000',
   10,
 );
 export const GITHUB_PR_TRIGGER =
   process.env.GITHUB_PR_TRIGGER || envConfig.GITHUB_PR_TRIGGER || '#claw';
 export const GITHUB_PR_REPLY_JID =
   process.env.GITHUB_PR_REPLY_JID || envConfig.GITHUB_PR_REPLY_JID || '';
+
+// GitHub webhook (event-driven via smee.io)
+export const GITHUB_SMEE_URL =
+  process.env.GITHUB_SMEE_URL || envConfig.GITHUB_SMEE_URL || '';
+export const GITHUB_WEBHOOK_SECRET =
+  process.env.GITHUB_WEBHOOK_SECRET || envConfig.GITHUB_WEBHOOK_SECRET || '';
+export const GITHUB_WEBHOOK_PORT = parseInt(
+  process.env.GITHUB_WEBHOOK_PORT || envConfig.GITHUB_WEBHOOK_PORT || '3002',
+  10,
+);
 
 // Timezone for scheduled tasks (cron expressions, etc.)
 // Uses system timezone by default

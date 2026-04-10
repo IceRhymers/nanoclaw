@@ -7,21 +7,21 @@ import {
   GITHUB_PR_REPOS,
   GITHUB_PR_TRIGGER,
 } from './config.js';
-import {
-  isGitHubCommentProcessed,
-  markGitHubCommentProcessed,
-} from './db.js';
+import { isGitHubCommentProcessed, markGitHubCommentProcessed } from './db.js';
 import { logger } from './logger.js';
 import { NewMessage, RegisteredGroup } from './types.js';
 
 const GITHUB_API = 'https://api.github.com';
 
-interface PRWatcherDeps {
+// ETag cache: GitHub returns 304 Not Modified (doesn't count toward rate limit) when content unchanged
+const etagCache = new Map<string, string>();
+
+export interface PRWatcherDeps {
   storeMessage: (msg: NewMessage) => void;
   findMainGroupJid: () => string | undefined;
 }
 
-interface GitHubComment {
+export interface GitHubComment {
   id: number;
   body: string;
   user: { login: string };
@@ -47,15 +47,30 @@ interface GitHubPR {
   diff_url: string;
 }
 
-function getGhToken(): string {
-  return (
-    process.env.GH_TOKEN || readEnvFile(['GH_TOKEN']).GH_TOKEN || ''
-  );
+interface GitHubIssue {
+  number: number;
+  title: string;
+  body: string | null;
+  state: string;
+  user: { login: string };
+  html_url: string;
+  labels: Array<{ name: string }>;
+  pull_request?: unknown; // present if this issue is actually a PR
 }
 
-async function ghFetch<T>(path: string, options?: RequestInit): Promise<T> {
+function getGhToken(): string {
+  return process.env.GH_TOKEN || readEnvFile(['GH_TOKEN']).GH_TOKEN || '';
+}
+
+async function ghFetch<T>(path: string, options?: RequestInit): Promise<T | null> {
   const token = getGhToken();
   if (!token) throw new Error('GH_TOKEN not configured');
+
+  const etagHeaders: Record<string, string> = {};
+  const cachedEtag = etagCache.get(path);
+  if (cachedEtag && (!options || options.method === undefined || options.method === 'GET')) {
+    etagHeaders['If-None-Match'] = cachedEtag;
+  }
 
   const res = await fetch(`${GITHUB_API}${path}`, {
     ...options,
@@ -63,13 +78,25 @@ async function ghFetch<T>(path: string, options?: RequestInit): Promise<T> {
       Authorization: `token ${token}`,
       Accept: 'application/vnd.github+json',
       'X-GitHub-Api-Version': '2022-11-28',
+      ...etagHeaders,
       ...options?.headers,
     },
   });
 
+  // 304 Not Modified — no new data, doesn't count toward rate limit
+  if (res.status === 304) {
+    return null;
+  }
+
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     throw new Error(`GitHub API ${res.status}: ${path} — ${body}`);
+  }
+
+  // Cache the ETag for next request
+  const etag = res.headers.get('etag');
+  if (etag) {
+    etagCache.set(path, etag);
   }
 
   return res.json() as Promise<T>;
@@ -105,25 +132,33 @@ function extractPrNumber(comment: GitHubComment): number | null {
   return null;
 }
 
+async function fetchIssueDetails(
+  repo: string,
+  issueNumber: number,
+): Promise<GitHubIssue> {
+  const result = await ghFetch<GitHubIssue>(`/repos/${repo}/issues/${issueNumber}`);
+  if (!result) throw new Error(`No data for issue ${repo}#${issueNumber}`);
+  return result;
+}
+
 async function fetchPRDetails(
   repo: string,
   prNumber: number,
 ): Promise<GitHubPR> {
-  return ghFetch<GitHubPR>(`/repos/${repo}/pulls/${prNumber}`);
+  const result = await ghFetch<GitHubPR>(`/repos/${repo}/pulls/${prNumber}`);
+  if (!result) throw new Error(`No data for PR ${repo}#${prNumber}`);
+  return result;
 }
 
 async function fetchPRDiff(repo: string, prNumber: number): Promise<string> {
   const token = getGhToken();
-  const res = await fetch(
-    `${GITHUB_API}/repos/${repo}/pulls/${prNumber}`,
-    {
-      headers: {
-        Authorization: `token ${token}`,
-        Accept: 'application/vnd.github.diff',
-        'X-GitHub-Api-Version': '2022-11-28',
-      },
+  const res = await fetch(`${GITHUB_API}/repos/${repo}/pulls/${prNumber}`, {
+    headers: {
+      Authorization: `token ${token}`,
+      Accept: 'application/vnd.github.diff',
+      'X-GitHub-Api-Version': '2022-11-28',
     },
-  );
+  });
   if (!res.ok) return '[diff unavailable]';
   const diff = await res.text();
   // Truncate large diffs to avoid overwhelming the agent
@@ -141,7 +176,13 @@ function buildPrompt(
   commentType: 'issue' | 'review',
 ): string {
   const triggerStripped = comment.body
-    .replace(new RegExp(GITHUB_PR_TRIGGER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), '')
+    .replace(
+      new RegExp(
+        GITHUB_PR_TRIGGER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+        'gi',
+      ),
+      '',
+    )
     .trim();
 
   const lines: string[] = [
@@ -154,7 +195,9 @@ function buildPrompt(
   ];
 
   if (commentType === 'review' && comment.path) {
-    lines.push(`File: ${comment.path}${comment.line ? ` (line ${comment.line})` : ''}`);
+    lines.push(
+      `File: ${comment.path}${comment.line ? ` (line ${comment.line})` : ''}`,
+    );
     if (comment.diff_hunk) {
       lines.push('', 'Diff hunk:', '```diff', comment.diff_hunk, '```');
     }
@@ -175,7 +218,53 @@ function buildPrompt(
   return lines.join('\n');
 }
 
-async function processComment(
+function buildIssuePrompt(
+  repo: string,
+  issue: GitHubIssue,
+  comment: GitHubComment,
+): string {
+  const triggerStripped = comment.body
+    .replace(
+      new RegExp(
+        GITHUB_PR_TRIGGER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+        'gi',
+      ),
+      '',
+    )
+    .trim();
+
+  const labels = issue.labels.map((l) => l.name).join(', ');
+
+  const lines: string[] = [
+    `@${ASSISTANT_NAME} GitHub Issue`,
+    '',
+    `Repository: ${repo}`,
+    `Issue #${issue.number}: "${issue.title}" by ${issue.user.login}`,
+    `Link: ${issue.html_url}`,
+  ];
+
+  if (labels) {
+    lines.push(`Labels: ${labels}`);
+  }
+
+  if (issue.body) {
+    lines.push('', 'Issue description:', issue.body);
+  }
+
+  lines.push(
+    '',
+    `Comment by: ${comment.user.login}`,
+    `> ${triggerStripped || comment.body}`,
+    '',
+    'You have access to the `gh` CLI to interact with this issue.',
+    `To comment on the issue: gh issue comment ${issue.number} --repo ${repo} --body "your reply"`,
+    'IMPORTANT: Always end your issue comment with a sign-off on its own line: 🦀 *(reply via claw)*',
+  );
+
+  return lines.join('\n');
+}
+
+export async function processComment(
   repo: string,
   comment: GitHubComment,
   commentType: 'issue' | 'review',
@@ -185,9 +274,12 @@ async function processComment(
 
   if (isGitHubCommentProcessed(commentIdStr)) return;
 
-  const prNumber = extractPrNumber(comment);
-  if (!prNumber) {
-    logger.warn({ commentId: comment.id, repo }, 'Could not extract PR number from comment');
+  const itemNumber = extractPrNumber(comment);
+  if (!itemNumber) {
+    logger.warn(
+      { commentId: comment.id, repo },
+      'Could not extract issue/PR number from comment',
+    );
     return;
   }
 
@@ -197,29 +289,65 @@ async function processComment(
     return;
   }
 
+  // Check if this is a PR or a plain issue
+  const issue = await fetchIssueDetails(repo, itemNumber);
+
+  if (!issue.pull_request) {
+    // Plain issue — skip if closed
+    if (issue.state !== 'open') {
+      logger.info(
+        { repo, issue: itemNumber, state: issue.state },
+        'Skipping closed issue comment',
+      );
+      return;
+    }
+
+    logger.info(
+      { repo, issue: itemNumber, commentId: comment.id, author: comment.user.login },
+      'Processing GitHub issue comment',
+    );
+
+    try {
+      await addReaction(repo, comment.id, 'issue');
+    } catch (err) {
+      logger.warn({ err, commentId: comment.id }, 'Failed to add reaction');
+    }
+
+    const prompt = buildIssuePrompt(repo, issue, comment);
+
+    deps.storeMessage({
+      id: `gh-${commentIdStr}`,
+      chat_jid: targetJid,
+      sender: 'github',
+      sender_name: 'GitHub Issue',
+      content: prompt,
+      timestamp: new Date().toISOString(),
+      is_from_me: true,
+    });
+
+    markGitHubCommentProcessed(commentIdStr, 'issue', repo, itemNumber);
+    return;
+  }
+
+  // It's a PR — existing flow
   logger.info(
-    { repo, pr: prNumber, commentId: comment.id, author: comment.user.login },
+    { repo, pr: itemNumber, commentId: comment.id, author: comment.user.login },
     'Processing GitHub PR comment',
   );
 
-  // React to acknowledge
   try {
     await addReaction(repo, comment.id, commentType);
   } catch (err) {
     logger.warn({ err, commentId: comment.id }, 'Failed to add reaction');
   }
 
-  // Gather PR context
   const [pr, diff] = await Promise.all([
-    fetchPRDetails(repo, prNumber),
-    commentType === 'issue'
-      ? fetchPRDiff(repo, prNumber)
-      : Promise.resolve(''),
+    fetchPRDetails(repo, itemNumber),
+    commentType === 'issue' ? fetchPRDiff(repo, itemNumber) : Promise.resolve(''),
   ]);
 
   const prompt = buildPrompt(repo, pr, comment, diff, commentType);
 
-  // Inject as synthetic message into main group
   deps.storeMessage({
     id: `gh-${commentIdStr}`,
     chat_jid: targetJid,
@@ -230,17 +358,17 @@ async function processComment(
     is_from_me: true,
   });
 
-  markGitHubCommentProcessed(commentIdStr, commentType, repo, prNumber);
+  markGitHubCommentProcessed(commentIdStr, commentType, repo, itemNumber);
 }
 
-function matchesTrigger(body: string): boolean {
+export function matchesTrigger(body: string): boolean {
   return new RegExp(
     GITHUB_PR_TRIGGER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
     'i',
   ).test(body);
 }
 
-function isAllowedUser(login: string): boolean {
+export function isAllowedUser(login: string): boolean {
   return GITHUB_PR_ALLOWED_USERS.includes(login.toLowerCase());
 }
 
@@ -249,16 +377,18 @@ async function pollRepo(
   since: string,
   deps: PRWatcherDeps,
 ): Promise<void> {
-  // Fetch issue comments (general PR comments)
+  // Fetch issue comments (general PR/issue comments)
   try {
     const issueComments = await ghFetch<GitHubComment[]>(
       `/repos/${repo}/issues/comments?since=${since}&sort=created&direction=asc&per_page=100`,
     );
-    for (const comment of issueComments) {
-      if (!comment.issue_url) continue; // not on a PR
-      if (!matchesTrigger(comment.body)) continue;
-      if (!isAllowedUser(comment.user.login)) continue;
-      await processComment(repo, comment, 'issue', deps);
+    if (issueComments) {
+      for (const comment of issueComments) {
+        if (!comment.issue_url) continue;
+        if (!matchesTrigger(comment.body)) continue;
+        if (!isAllowedUser(comment.user.login)) continue;
+        await processComment(repo, comment, 'issue', deps);
+      }
     }
   } catch (err) {
     logger.error({ err, repo }, 'Failed to fetch issue comments');
@@ -269,10 +399,12 @@ async function pollRepo(
     const reviewComments = await ghFetch<GitHubComment[]>(
       `/repos/${repo}/pulls/comments?since=${since}&sort=created&direction=asc&per_page=100`,
     );
-    for (const comment of reviewComments) {
-      if (!matchesTrigger(comment.body)) continue;
-      if (!isAllowedUser(comment.user.login)) continue;
-      await processComment(repo, comment, 'review', deps);
+    if (reviewComments) {
+      for (const comment of reviewComments) {
+        if (!matchesTrigger(comment.body)) continue;
+        if (!isAllowedUser(comment.user.login)) continue;
+        await processComment(repo, comment, 'review', deps);
+      }
     }
   } catch (err) {
     logger.error({ err, repo }, 'Failed to fetch review comments');
@@ -285,7 +417,9 @@ export function startGitHubPRWatcher(deps: PRWatcherDeps): void {
     return;
   }
   if (GITHUB_PR_ALLOWED_USERS.length === 0) {
-    logger.warn('GitHub PR watcher enabled but GITHUB_PR_ALLOWED_USERS is empty');
+    logger.warn(
+      'GitHub PR watcher enabled but GITHUB_PR_ALLOWED_USERS is empty',
+    );
     return;
   }
   if (!getGhToken()) {
@@ -294,7 +428,11 @@ export function startGitHubPRWatcher(deps: PRWatcherDeps): void {
   }
 
   logger.info(
-    { repos: GITHUB_PR_REPOS, users: GITHUB_PR_ALLOWED_USERS, trigger: GITHUB_PR_TRIGGER },
+    {
+      repos: GITHUB_PR_REPOS,
+      users: GITHUB_PR_ALLOWED_USERS,
+      trigger: GITHUB_PR_TRIGGER,
+    },
     'Starting GitHub PR comment watcher',
   );
 
