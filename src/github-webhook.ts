@@ -86,7 +86,9 @@ function handleWebhook(
     const signature = req.headers['x-hub-signature-256'] as string | undefined;
     if (GITHUB_WEBHOOK_SECRET && signature) {
       if (!verifySignature(body, signature, GITHUB_WEBHOOK_SECRET)) {
-        logger.debug('GitHub webhook: signature mismatch (smee may have re-serialized body)');
+        logger.debug(
+          'GitHub webhook: signature mismatch (smee may have re-serialized body)',
+        );
       }
     }
 
@@ -135,7 +137,8 @@ function handleWebhook(
       return;
     }
 
-    const commentType = event === 'pull_request_review_comment' ? 'review' : 'issue';
+    const commentType =
+      event === 'pull_request_review_comment' ? 'review' : 'issue';
 
     logger.info(
       { repo, commentId: comment.id, event, author: comment.user.login },
@@ -144,7 +147,10 @@ function handleWebhook(
 
     // Process asynchronously, respond immediately
     processComment(repo, comment, commentType, deps).catch((err) =>
-      logger.error({ err, repo, commentId: comment.id }, 'GitHub webhook: failed to process comment'),
+      logger.error(
+        { err, repo, commentId: comment.id },
+        'GitHub webhook: failed to process comment',
+      ),
     );
 
     res.writeHead(200);
@@ -179,14 +185,17 @@ export function startGitHubWebhook(deps: PRWatcherDeps): void {
     },
   });
 
-  smeeClient.start().then(() => {
-    logger.info(
-      { smeeUrl: GITHUB_SMEE_URL, port: GITHUB_WEBHOOK_PORT },
-      'GitHub webhook relay (smee) connected and forwarding',
-    );
-  }).catch((err) => {
-    logger.error({ err }, 'GitHub webhook relay (smee) failed to connect');
-  });
+  smeeClient
+    .start()
+    .then(() => {
+      logger.info(
+        { smeeUrl: GITHUB_SMEE_URL, port: GITHUB_WEBHOOK_PORT },
+        'GitHub webhook relay (smee) connected and forwarding',
+      );
+    })
+    .catch((err) => {
+      logger.error({ err }, 'GitHub webhook relay (smee) failed to connect');
+    });
 
   logger.info(
     { smeeUrl: GITHUB_SMEE_URL, port: GITHUB_WEBHOOK_PORT },

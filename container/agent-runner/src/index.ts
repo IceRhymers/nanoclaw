@@ -410,44 +410,58 @@ async function runQuery(
         'mcp__nanoclaw__*',
         'mcp__kanboard__*',
         'mcp__gmail__*',
-        'mcp__gmail2__*'
+        'mcp__gmail2__*',
+        'mcp__sourcebot__*'
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
       settingSources: ['project', 'user'],
-      mcpServers: {
-        nanoclaw: {
-          command: 'node',
-          args: [mcpServerPath],
-          env: {
-            NANOCLAW_CHAT_JID: containerInput.chatJid,
-            NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
-            NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
+      mcpServers: (() => {
+        const servers: Record<string, any> = {
+          nanoclaw: {
+            command: 'node',
+            args: [mcpServerPath],
+            env: {
+              NANOCLAW_CHAT_JID: containerInput.chatJid,
+              NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
+              NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
+            },
           },
-        },
-        kanboard: {
-          command: 'node',
-          args: [path.join(path.dirname(mcpServerPath), 'kanboard-mcp-stdio.js')],
-          env: {
-            KANBOARD_URL: process.env.KANBOARD_URL || 'http://host.docker.internal:8070/jsonrpc.php',
-            KANBOARD_USER: process.env.KANBOARD_USER || 'nanoclaw',
-            KANBOARD_TOKEN: process.env.KANBOARD_TOKEN || 'nanoclaw-api-2026',
+          kanboard: {
+            command: 'node',
+            args: [path.join(path.dirname(mcpServerPath), 'kanboard-mcp-stdio.js')],
+            env: {
+              KANBOARD_URL: process.env.KANBOARD_URL || 'http://host.docker.internal:8070/jsonrpc.php',
+              KANBOARD_USER: process.env.KANBOARD_USER || 'nanoclaw',
+              KANBOARD_TOKEN: process.env.KANBOARD_TOKEN || 'nanoclaw-api-2026',
+            },
           },
-        },
-        gmail: {
-          command: 'npx',
-          args: ['-y', '@gongrzhe/server-gmail-autoauth-mcp'],
-        },
-        gmail2: {
-          command: 'npx',
-          args: ['-y', '@gongrzhe/server-gmail-autoauth-mcp'],
-          env: {
-            GMAIL_OAUTH_PATH: '/home/node/.gmail-mcp-2/gcp-oauth.keys.json',
-            GMAIL_CREDENTIALS_PATH: '/home/node/.gmail-mcp-2/credentials.json',
+          gmail: {
+            command: 'npx',
+            args: ['-y', '@gongrzhe/server-gmail-autoauth-mcp'],
           },
-        },
-      },
+          gmail2: {
+            command: 'npx',
+            args: ['-y', '@gongrzhe/server-gmail-autoauth-mcp'],
+            env: {
+              GMAIL_OAUTH_PATH: '/home/node/.gmail-mcp-2/gcp-oauth.keys.json',
+              GMAIL_CREDENTIALS_PATH: '/home/node/.gmail-mcp-2/credentials.json',
+            },
+          },
+        };
+        // Sourcebot: HTTP MCP for code search (only if configured)
+        if (process.env.SOURCEBOT_MCP_URL) {
+          servers.sourcebot = {
+            type: 'http' as const,
+            url: process.env.SOURCEBOT_MCP_URL,
+            ...(process.env.SOURCEBOT_MCP_TOKEN ? {
+              headers: { 'Authorization': `Bearer ${process.env.SOURCEBOT_MCP_TOKEN}` },
+            } : {}),
+          };
+        }
+        return servers;
+      })(),
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
       },

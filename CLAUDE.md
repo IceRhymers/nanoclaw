@@ -79,6 +79,10 @@ Kanboard runs as Docker container `nanoclaw-kanboard` on port 8070. Started auto
 - **Data:** persisted in Docker volumes `kanboard-data` and `kanboard-plugins`
 - **MCP server:** `container/agent-runner/src/kanboard-mcp-stdio.ts` — compiled at container startup, provides `mcp__kanboard__*` tools to agents
 
+## Sourcebot (Code Search)
+
+Sourcebot is a self-hosted code search platform, managed independently via `docker compose -f sourcebot/docker-compose.yml up -d`. Agents connect via HTTP MCP when `SOURCEBOT_MCP_URL` and `SOURCEBOT_MCP_TOKEN` are set in `.env`. Port 3000, web UI at `http://localhost:3000`.
+
 ## Troubleshooting
 
 **WhatsApp not connecting after upgrade:** WhatsApp is now a separate channel fork, not bundled in core. Run `/add-whatsapp` (or `git remote add whatsapp https://github.com/qwibitai/nanoclaw-whatsapp.git && git fetch whatsapp main && (git merge whatsapp/main || { git checkout --theirs package-lock.json && git add package-lock.json && git merge --continue; }) && npm run build`) to install it. Existing auth credentials and groups are preserved.
@@ -86,6 +90,8 @@ Kanboard runs as Docker container `nanoclaw-kanboard` on port 8070. Started auto
 **Agent reports errors from previous session (repeats old errors without retrying):** The agent has a persistent session and may remember stale errors. To reset: clear the session from `store/messages.db` (`DELETE FROM sessions WHERE group_folder = '<folder>'`) AND delete the session files at `data/sessions/<folder>/.claude/projects/-workspace-group/<session-id>*`. Must do BOTH — deleting files without clearing the DB causes "No conversation found" crash loops.
 
 **Kanboard 403 on API calls:** The Kanboard user must have `app-admin` role. The `app-manager` role returns `{"code":403}` on most JSON-RPC methods (getAllProjects, etc.). Fix: `curl -u admin:admin http://localhost:8070/jsonrpc.php -d '{"jsonrpc":"2.0","method":"updateUser","id":1,"params":{"id":2,"role":"app-admin"}}'`
+
+**Sourcebot MCP not working in agents:** Verify Sourcebot is running (`docker compose -f sourcebot/docker-compose.yml ps`), check that `SOURCEBOT_MCP_URL` and `SOURCEBOT_MCP_TOKEN` are set in `.env`, and ensure repos have finished indexing (check Sourcebot web UI at localhost:3000). Rebuild and restart NanoClaw after adding env vars.
 
 **MCP server changes not taking effect in agent containers:** Agent-runner source is copied to `data/sessions/<group>/agent-runner-src/` and bind-mounted over `/app/src` in the container. Changes to `container/agent-runner/src/` propagate automatically on next container spawn (the source is re-synced each time). If changes still don't appear, check for Docker buildkit cache issues (see below).
 

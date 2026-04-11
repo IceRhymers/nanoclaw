@@ -62,13 +62,19 @@ function getGhToken(): string {
   return process.env.GH_TOKEN || readEnvFile(['GH_TOKEN']).GH_TOKEN || '';
 }
 
-async function ghFetch<T>(path: string, options?: RequestInit): Promise<T | null> {
+async function ghFetch<T>(
+  path: string,
+  options?: RequestInit,
+): Promise<T | null> {
   const token = getGhToken();
   if (!token) throw new Error('GH_TOKEN not configured');
 
   const etagHeaders: Record<string, string> = {};
   const cachedEtag = etagCache.get(path);
-  if (cachedEtag && (!options || options.method === undefined || options.method === 'GET')) {
+  if (
+    cachedEtag &&
+    (!options || options.method === undefined || options.method === 'GET')
+  ) {
     etagHeaders['If-None-Match'] = cachedEtag;
   }
 
@@ -136,7 +142,9 @@ async function fetchIssueDetails(
   repo: string,
   issueNumber: number,
 ): Promise<GitHubIssue> {
-  const result = await ghFetch<GitHubIssue>(`/repos/${repo}/issues/${issueNumber}`);
+  const result = await ghFetch<GitHubIssue>(
+    `/repos/${repo}/issues/${issueNumber}`,
+  );
   if (!result) throw new Error(`No data for issue ${repo}#${issueNumber}`);
   return result;
 }
@@ -303,7 +311,12 @@ export async function processComment(
     }
 
     logger.info(
-      { repo, issue: itemNumber, commentId: comment.id, author: comment.user.login },
+      {
+        repo,
+        issue: itemNumber,
+        commentId: comment.id,
+        author: comment.user.login,
+      },
       'Processing GitHub issue comment',
     );
 
@@ -343,7 +356,9 @@ export async function processComment(
 
   const [pr, diff] = await Promise.all([
     fetchPRDetails(repo, itemNumber),
-    commentType === 'issue' ? fetchPRDiff(repo, itemNumber) : Promise.resolve(''),
+    commentType === 'issue'
+      ? fetchPRDiff(repo, itemNumber)
+      : Promise.resolve(''),
   ]);
 
   const prompt = buildPrompt(repo, pr, comment, diff, commentType);

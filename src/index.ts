@@ -653,9 +653,7 @@ async function main(): Promise<void> {
   const githubDeps = {
     storeMessage,
     findMainGroupJid: () => {
-      const entry = Object.entries(registeredGroups).find(
-        ([, g]) => g.isMain,
-      );
+      const entry = Object.entries(registeredGroups).find(([, g]) => g.isMain);
       return entry?.[0];
     },
   };
