@@ -18,7 +18,16 @@ import {
   STORE_DIR,
 } from '../config.js';
 import { getLastGroupSync, setLastGroupSync, updateChatName } from '../db.js';
-import { logger } from '../logger.js';
+import { logger as baseLogger } from '../logger.js';
+
+// Baileys expects a pino-compatible ILogger with level, child, trace.
+// Wrap our built-in logger to satisfy the interface.
+const logger = Object.assign({}, baseLogger, {
+  level: 'info' as string,
+  trace: (dataOrMsg: Record<string, unknown> | string, msg?: string) =>
+    baseLogger.debug(dataOrMsg, msg),
+  child: () => logger,
+});
 import {
   Channel,
   OnInboundMessage,

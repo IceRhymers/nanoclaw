@@ -1,7 +1,15 @@
 {
-    "permissions": {
-        "deny": [
-            "Read(.env)"
-        ]
+  "permissions": {
+    "deny": [
+      "Read(.env)"
+    ]
+  },
+  "sandbox": {
+    "network": {
+      "allowedDomains": [
+        "npm.registry.com",
+        "us.i.posthog.com"
+      ]
     }
+  }
 }
