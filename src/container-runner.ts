@@ -268,10 +268,14 @@ function buildContainerArgs(
   }
 
   // Pass Sourcebot MCP URL and token so agents can use code search
-  const sourcebotUrl = process.env.SOURCEBOT_MCP_URL || readEnvFile(['SOURCEBOT_MCP_URL']).SOURCEBOT_MCP_URL;
+  const sourcebotUrl =
+    process.env.SOURCEBOT_MCP_URL ||
+    readEnvFile(['SOURCEBOT_MCP_URL']).SOURCEBOT_MCP_URL;
   if (sourcebotUrl) {
     args.push('-e', `SOURCEBOT_MCP_URL=${sourcebotUrl}`);
-    const sourcebotToken = process.env.SOURCEBOT_MCP_TOKEN || readEnvFile(['SOURCEBOT_MCP_TOKEN']).SOURCEBOT_MCP_TOKEN;
+    const sourcebotToken =
+      process.env.SOURCEBOT_MCP_TOKEN ||
+      readEnvFile(['SOURCEBOT_MCP_TOKEN']).SOURCEBOT_MCP_TOKEN;
     if (sourcebotToken) {
       args.push('-e', `SOURCEBOT_MCP_TOKEN=${sourcebotToken}`);
     }
